@@ -50,4 +50,4 @@ This will:
 - Processes 30,000+ markets efficiently
 
 ## Author
-BD_Harold
+Vittorio Apicella
