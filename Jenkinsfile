@@ -134,8 +134,17 @@ pipeline {
                         # Validate requirements.txt format (basic check)
                         echo "Checking requirements.txt format..."
                         while IFS= read -r line || [ -n "\$line" ]; do
-                            # Skip empty lines and comments
-                            if [ -z "\${line// }" ] || [ "\${line#\${line%%[! ]*}}" = "#" ]; then
+                            # Skip empty lines
+                            if [ -z "\$line" ]; then
+                                continue
+                            fi
+                            # Skip lines that are just whitespace
+                            trimmed=\$(echo "\$line" | xargs)
+                            if [ -z "\$trimmed" ]; then
+                                continue
+                            fi
+                            # Skip comment lines
+                            if echo "\$line" | grep -qE '^[[:space:]]*#'; then
                                 continue
                             fi
                             # Check if line looks like a valid requirement
@@ -454,6 +463,7 @@ else:
             // Clean up virtual environment (optional - comment out if you want to keep it)
             // Uncomment the following to clean up venv after each build
             // sh "rm -rf venv" || true
+            echo "Build completed"
         }
     }
 }
