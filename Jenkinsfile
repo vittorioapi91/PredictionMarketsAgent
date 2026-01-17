@@ -134,9 +134,17 @@ pipeline {
                         # Validate requirements.txt format (basic check)
                         echo "Checking requirements.txt format..."
                         while IFS= read -r line || [ -n "\$line" ]; do
-                            # Skip empty lines and comments (portable shell syntax)
-                            line_trimmed=\$(echo "\$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*\$//')
-                            if [ -z "\$line_trimmed" ] || [ "\${line_trimmed#\#}" != "\$line_trimmed" ]; then
+                            # Skip empty lines
+                            if [ -z "\$line" ]; then
+                                continue
+                            fi
+                            # Skip lines that are just whitespace
+                            trimmed=\$(echo "\$line" | xargs)
+                            if [ -z "\$trimmed" ]; then
+                                continue
+                            fi
+                            # Skip comment lines
+                            if echo "\$line" | grep -qE '^[[:space:]]*#'; then
                                 continue
                             fi
                             # Check if line looks like a valid requirement
