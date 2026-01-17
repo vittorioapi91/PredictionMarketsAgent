@@ -454,6 +454,7 @@ else:
             // Clean up virtual environment (optional - comment out if you want to keep it)
             // Uncomment the following to clean up venv after each build
             // sh "rm -rf venv" || true
+            echo "Build completed"
         }
     }
 }
