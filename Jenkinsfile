@@ -134,8 +134,9 @@ pipeline {
                         # Validate requirements.txt format (basic check)
                         echo "Checking requirements.txt format..."
                         while IFS= read -r line || [ -n "\$line" ]; do
-                            # Skip empty lines and comments
-                            if [ -z "\${line// }" ] || [ "\${line#\${line%%[! ]*}}" = "#" ]; then
+                            # Skip empty lines and comments (portable shell syntax)
+                            line_trimmed=\$(echo "\$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*\$//')
+                            if [ -z "\$line_trimmed" ] || [ "\${line_trimmed#\#}" != "\$line_trimmed" ]; then
                                 continue
                             fi
                             # Check if line looks like a valid requirement
