@@ -22,9 +22,12 @@ def filter_open_markets(markets_data):
 def main():
     date_today = datetime.now().strftime('%Y%m%d')
     
+    # Get project root directory (one level up from src/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     # Input file path
     input_file = os.path.join(
-        os.path.dirname(__file__),
+        project_root,
         'historical_data',
         'raw_data',
         f'polymarket_data_{date_today}.csv'
@@ -32,7 +35,7 @@ def main():
     
     # Output file path
     output_file = os.path.join(
-        os.path.dirname(__file__),
+        project_root,
         'historical_data',
         'open_markets',
         f'open_markets_{date_today}.csv'

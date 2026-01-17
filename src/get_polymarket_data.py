@@ -183,9 +183,11 @@ def main():
     if markets:
         # Get current date for filename
         current_date = datetime.now().strftime('%Y%m%d')
+        # Get project root directory (one level up from src/)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         # Create filename with date
         csv_file = os.path.join(
-            os.path.dirname(__file__), 
+            project_root, 
             'historical_data',
             'raw_data',
             f'polymarket_data_{current_date}.csv'

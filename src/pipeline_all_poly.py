@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 
 def create_directories():
     """Create necessary directories if they don't exist."""
+    # Get project root directory (one level up from src/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     dirs = [
-        "historical_data",
-        "historical_data/raw_data",
-        "historical_data/open_markets"
+        os.path.join(project_root, "historical_data"),
+        os.path.join(project_root, "historical_data/raw_data"),
+        os.path.join(project_root, "historical_data/open_markets")
     ]
     
     for directory in dirs:
@@ -50,14 +52,18 @@ def run_pipeline():
     # Step 1: Create directories
     create_directories()
     
+    # Get project root directory (one level up from src/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src_dir = os.path.join(project_root, "src")
+    
     # Step 2: Collect all Polymarket data
     logger.info("Step 1/2: Collecting Polymarket data...")
-    if not run_subprocess(["python", "get_polymarket_data.py"]):
+    if not run_subprocess(["python", os.path.join(src_dir, "get_polymarket_data.py")]):
         return
     
     # Step 3: Filter for open markets
     logger.info("Step 2/2: Filtering open markets...")
-    if not run_subprocess(["python", "get_open_markets.py"]):
+    if not run_subprocess(["python", os.path.join(src_dir, "get_open_markets.py")]):
         return
     
     logger.info(f"Pipeline completed successfully - {date_today}")
