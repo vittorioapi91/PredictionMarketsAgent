@@ -56,3 +56,9 @@ dmypy.json
 
 # Historical data (large CSV files)
 historical_data/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
