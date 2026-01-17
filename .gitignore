@@ -53,3 +53,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Historical data (large CSV files)
+historical_data/
