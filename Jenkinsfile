@@ -452,10 +452,8 @@ else:
         }
         always {
             // Clean up virtual environment (optional - comment out if you want to keep it)
-            script {
-                // Uncomment the following to clean up venv after each build
-                // sh "rm -rf venv" || true
-            }
+            // Uncomment the following to clean up venv after each build
+            // sh "rm -rf venv" || true
         }
     }
 }
