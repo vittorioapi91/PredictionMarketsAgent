@@ -52,8 +52,8 @@ pipeline {
                         fi
                         
                         # Check required source files exist
-                        if [ ! -f "src/get_polymarket_data.py" ]; then
-                            echo "❌ ERROR: src/get_polymarket_data.py not found"
+                        if [ ! -f "src/main.py" ]; then
+                            echo "❌ ERROR: src/main.py not found"
                             exit 1
                         fi
                         
@@ -199,18 +199,18 @@ pipeline {
                         VENV_PYTHON="venv/bin/python"
                         
                         # Test imports for each source file
-                        echo "Testing imports in src/get_polymarket_data.py..."
+                        echo "Testing imports in src/main.py..."
                         \${VENV_PYTHON} -c "
 import sys
 sys.path.insert(0, 'src')
 try:
-    import get_polymarket_data
-    print('✓ get_polymarket_data imports successfully')
+    import main
+    print('✓ main imports successfully')
 except ImportError as e:
-    print(f'❌ Import error in get_polymarket_data: {e}')
+    print(f'❌ Import error in main: {e}')
     sys.exit(1)
 except Exception as e:
-    print(f'⚠️  Warning in get_polymarket_data: {e}')
+    print(f'⚠️  Warning in main: {e}')
 " || exit 1
                         
                         echo "Testing imports in src/get_open_markets.py..."
@@ -349,15 +349,15 @@ except Exception as e:
                         # Check that main functions exist and are callable
                         echo "Checking script entry points..."
                         
-                        # Check get_polymarket_data.py
+                        # Check main.py
                         \${VENV_PYTHON} -c "
 import sys
 sys.path.insert(0, 'src')
-import get_polymarket_data
-if hasattr(get_polymarket_data, 'main'):
-    print('✓ get_polymarket_data has main() function')
+import main
+if hasattr(main, 'main'):
+    print('✓ main has main() function')
 else:
-    print('⚠️  Warning: get_polymarket_data does not have main() function')
+    print('⚠️  Warning: main does not have main() function')
 " || true
                         
                         # Check get_open_markets.py

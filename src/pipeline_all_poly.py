@@ -66,7 +66,7 @@ def run_pipeline():
     
     # Step 2: Collect all Polymarket data
     logger.info("Step 1/2: Collecting Polymarket data...")
-    if not run_subprocess(["python", os.path.join(src_dir, "get_polymarket_data.py")]):
+    if not run_subprocess(["python", os.path.join(src_dir, "main.py")]):
         return
     
     # Step 3: Filter for open markets

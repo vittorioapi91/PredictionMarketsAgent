@@ -23,7 +23,7 @@ setup(
     packages=find_packages(),
     package_dir={"": "."},
     py_modules=[
-        "src.get_polymarket_data",
+        "src.main",
         "src.get_open_markets",
         "src.pipeline_all_poly",
     ],
@@ -41,7 +41,7 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "get-polymarket-data=src.get_polymarket_data:main",
+            "prediction-markets-agent=src.main:main",
             "get-open-markets=src.get_open_markets:main",
             "pipeline-all-poly=src.pipeline_all_poly:main",
         ],
