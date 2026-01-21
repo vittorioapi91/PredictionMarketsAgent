@@ -64,3 +64,5 @@ build/
 dist/
 *.egg-info/
 *.egg
+
+# Note: dist/ is ignored, but dist/{env}/ directories can be tracked if needed
