@@ -23,7 +23,7 @@ echo "Building for environment: $ENV"
 
 # Clean previous builds
 echo "Cleaning previous builds..."
-rm -rf build/ *.egg-info
+rm -rf build/
 
 # Create environment-specific dist directory
 ENV_DIST_DIR="dist/$ENV"
@@ -46,6 +46,17 @@ if [ -n "$WHEEL_FILE" ]; then
 else
     echo "Error: Wheel file not found!"
     exit 1
+fi
+
+# Move egg-info to environment-specific directory if it exists
+if [ -d "*.egg-info" ] 2>/dev/null || ls *.egg-info 1> /dev/null 2>&1; then
+    EGG_INFO_DIR=$(ls -d *.egg-info 2>/dev/null | head -1)
+    if [ -n "$EGG_INFO_DIR" ] && [ -d "$EGG_INFO_DIR" ]; then
+        echo ""
+        echo "Moving egg-info to environment directory..."
+        mv "$EGG_INFO_DIR" "$ENV_DIST_DIR/"
+        echo "✓ egg-info moved to: $ENV_DIST_DIR/$EGG_INFO_DIR"
+    fi
 fi
 
 # Clean up build directory
