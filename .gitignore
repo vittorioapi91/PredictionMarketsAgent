@@ -30,6 +30,7 @@ ENV/
 .vscode/*
 !.vscode/launch.json
 !.vscode/settings.json
+pyrightconfig.json
 .idea/
 *.swp
 *.swo

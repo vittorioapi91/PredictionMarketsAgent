@@ -1,0 +1,20 @@
+{
+    "include": [
+        "src"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        ".venv",
+        "dist",
+        "build"
+    ],
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Darwin",
+    "extraPaths": [
+        ".",
+        "src"
+    ],
+    "typeCheckingMode": "basic"
+}
