@@ -3,6 +3,11 @@ import logging
 from datetime import datetime
 import subprocess
 from pathlib import Path
+try:
+    from src.utils import get_storage_path
+except ImportError:
+    # If running as a script directly, use relative import
+    from utils import get_storage_path
 
 # Set up logging
 logging.basicConfig(
@@ -14,12 +19,15 @@ logger = logging.getLogger(__name__)
 
 def create_directories():
     """Create necessary directories if they don't exist."""
-    # Get project root directory (one level up from src/)
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Get environment-specific storage paths
+    raw_data_dir = get_storage_path('raw_data')
+    open_markets_dir = get_storage_path('open_markets')
+    env_storage_dir = get_storage_path()
+    
     dirs = [
-        os.path.join(project_root, "historical_data"),
-        os.path.join(project_root, "historical_data/raw_data"),
-        os.path.join(project_root, "historical_data/open_markets")
+        env_storage_dir,
+        raw_data_dir,
+        open_markets_dir
     ]
     
     for directory in dirs:

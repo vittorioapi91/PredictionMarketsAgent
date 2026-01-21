@@ -7,6 +7,12 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import BUY
 from datetime import datetime
+from pathlib import Path
+try:
+    from src.utils import get_storage_path
+except ImportError:
+    # If running as a script directly, use relative import
+    from utils import get_storage_path
 
 def fetch_polymarket_data():
     """
@@ -183,13 +189,13 @@ def main():
     if markets:
         # Get current date for filename
         current_date = datetime.now().strftime('%Y%m%d')
-        # Get project root directory (one level up from src/)
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Get environment-specific storage path
+        storage_dir = get_storage_path('raw_data')
+        # Ensure directory exists
+        Path(storage_dir).mkdir(parents=True, exist_ok=True)
         # Create filename with date
         csv_file = os.path.join(
-            project_root, 
-            'historical_data',
-            'raw_data',
+            storage_dir,
             f'polymarket_data_{current_date}.csv'
         )
         save_markets_to_csv(markets, csv_file)
