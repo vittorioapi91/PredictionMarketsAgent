@@ -1,0 +1,6 @@
+# Test/Staging dependencies - includes testing tools
+-r requirements-prod.txt
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0

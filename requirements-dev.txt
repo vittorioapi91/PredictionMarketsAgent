@@ -1,0 +1,10 @@
+# Development dependencies - includes all dev tools
+-r requirements-test.txt
+
+# Development tools
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+ipython>=8.0.0
