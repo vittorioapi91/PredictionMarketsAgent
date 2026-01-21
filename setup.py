@@ -2,36 +2,9 @@ from setuptools import setup, find_packages
 import subprocess
 import os
 
-def get_version_with_env():
-    """Get version with environment suffix based on git branch"""
-    base_version = "0.1.0"
-    
-    # Try to get git branch
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        branch = result.stdout.strip()
-        
-        # Determine environment suffix based on branch
-        if branch == "main":
-            env_suffix = "prod"
-        elif branch == "staging":
-            env_suffix = "test"
-        elif branch.startswith("dev/"):
-            env_suffix = "dev"
-        else:
-            # Default to dev for other branches
-            env_suffix = "dev"
-        
-        return f"{base_version}+{env_suffix}"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        # If git is not available or not a git repo, default to dev
-        return f"{base_version}+dev"
+def get_version():
+    """Get base version (without environment suffix)"""
+    return "0.1.0"
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -41,7 +14,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="prediction-markets-agent",
-    version=get_version_with_env(),
+    version=get_version(),
     author="BD_Harold",
     description="A Python pipeline for collecting and analyzing market data from Polymarket",
     long_description=long_description,
