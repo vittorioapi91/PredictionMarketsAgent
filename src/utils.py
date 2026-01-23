@@ -1,6 +1,7 @@
 """Utility functions for PredictionMarketsAgent"""
 import os
 import subprocess
+from dotenv import load_dotenv
 
 
 def get_environment():
@@ -36,6 +37,24 @@ def get_environment():
         return "dev"
 
 
+def load_environment_file():
+    """
+    Load the appropriate .env file based on the current environment.
+    """
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = get_environment()
+    env_file = os.path.join(project_root, f".env-{env}")
+    
+    # Load environment-specific .env file
+    if os.path.exists(env_file):
+        load_dotenv(env_file, override=True)
+    else:
+        # Fallback to default .env if environment-specific file doesn't exist
+        default_env = os.path.join(project_root, ".env")
+        if os.path.exists(default_env):
+            load_dotenv(default_env)
+
+
 def get_storage_path(subpath=""):
     """
     Get the storage path based on environment.
@@ -50,10 +69,10 @@ def get_storage_path(subpath=""):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = get_environment()
     
-    # Build path: historical_data/{env}/{subpath}
+    # Build path: storage/{env}/{subpath}
     if subpath:
-        storage_path = os.path.join(project_root, "historical_data", env, subpath)
+        storage_path = os.path.join(project_root, "storage", env, subpath)
     else:
-        storage_path = os.path.join(project_root, "historical_data", env)
+        storage_path = os.path.join(project_root, "storage", env)
     
     return storage_path

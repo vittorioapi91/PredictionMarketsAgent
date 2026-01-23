@@ -30,7 +30,6 @@ ENV/
 .vscode/*
 !.vscode/launch.json
 !.vscode/settings.json
-pyrightconfig.json
 .idea/
 *.swp
 *.swo
@@ -43,6 +42,9 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+.env-dev
+.env-test
+.env-prod
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -57,10 +59,10 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
-# Historical data (large CSV files) - environment-specific
-historical_data/prod/
-historical_data/test/
-historical_data/dev/
+# Storage (large CSV files) - environment-specific
+storage/prod/
+storage/test/
+storage/dev/
 
 # Build artifacts
 build/

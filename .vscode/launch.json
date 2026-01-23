@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Python: PredictionMarketsAgent",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/src/main.py",
             "console": "integratedTerminal",
@@ -14,10 +14,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Python: Get Open Markets",
-            "type": "python",
+            "name": "Python: Data Pipeline",
+            "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/get_open_markets.py",
+            "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -26,16 +26,34 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Python: Pipeline All Poly",
-            "type": "python",
+            "name": "Python: Stream Prices",
+            "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/pipeline_all_poly.py",
+            "program": "${workspaceFolder}/src/polymarket/stream_prices.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Stream Order Book",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/polymarket/stream_orderbook.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--condition-id",
+                "0x03df3d8ef4d0318299e79a70c654c16379daa8ef9ea769a84926b6b41849ef5e",
+                "--duration",
+                "60"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
         }
-    ]
-}
+            ]
+    }

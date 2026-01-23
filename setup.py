@@ -24,8 +24,6 @@ setup(
     package_dir={"": "."},
     py_modules=[
         "src.main",
-        "src.get_open_markets",
-        "src.pipeline_all_poly",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -42,8 +40,8 @@ setup(
     entry_points={
         "console_scripts": [
             "prediction-markets-agent=src.main:main",
-            "get-open-markets=src.get_open_markets:main",
-            "pipeline-all-poly=src.pipeline_all_poly:main",
+            "prediction-markets-pipeline=src.polymarket.data_pipeline:main",
+            "stream-orderbook=src.polymarket.stream_orderbook:main",
         ],
     },
 )

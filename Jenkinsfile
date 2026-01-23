@@ -57,13 +57,19 @@ pipeline {
                             exit 1
                         fi
                         
-                        if [ ! -f "src/get_open_markets.py" ]; then
-                            echo "❌ ERROR: src/get_open_markets.py not found"
+                        # Check for new class-based modules
+                        if [ ! -f "src/polymarket_client.py" ]; then
+                            echo "❌ ERROR: src/polymarket_client.py not found"
                             exit 1
                         fi
                         
-                        if [ ! -f "src/pipeline_all_poly.py" ]; then
-                            echo "❌ ERROR: src/pipeline_all_poly.py not found"
+                        if [ ! -f "src/market_processor.py" ]; then
+                            echo "❌ ERROR: src/market_processor.py not found"
+                            exit 1
+                        fi
+                        
+                        if [ ! -f "src/data_pipeline.py" ]; then
+                            echo "❌ ERROR: src/data_pipeline.py not found"
                             exit 1
                         fi
                         
@@ -213,32 +219,46 @@ except Exception as e:
     print(f'⚠️  Warning in main: {e}')
 " || exit 1
                         
-                        echo "Testing imports in src/get_open_markets.py..."
+                        echo "Testing imports in src/polymarket_client.py..."
                         \${VENV_PYTHON} -c "
 import sys
 sys.path.insert(0, 'src')
 try:
-    import get_open_markets
-    print('✓ get_open_markets imports successfully')
+    from polymarket_client import PolymarketClient
+    print('✓ polymarket_client imports successfully')
 except ImportError as e:
-    print(f'❌ Import error in get_open_markets: {e}')
+    print(f'❌ Import error in polymarket_client: {e}')
     sys.exit(1)
 except Exception as e:
-    print(f'⚠️  Warning in get_open_markets: {e}')
+    print(f'⚠️  Warning in polymarket_client: {e}')
 " || exit 1
                         
-                        echo "Testing imports in src/pipeline_all_poly.py..."
+                        echo "Testing imports in src/market_processor.py..."
                         \${VENV_PYTHON} -c "
 import sys
 sys.path.insert(0, 'src')
 try:
-    import pipeline_all_poly
-    print('✓ pipeline_all_poly imports successfully')
+    from market_processor import MarketDataProcessor
+    print('✓ market_processor imports successfully')
 except ImportError as e:
-    print(f'❌ Import error in pipeline_all_poly: {e}')
+    print(f'❌ Import error in market_processor: {e}')
     sys.exit(1)
 except Exception as e:
-    print(f'⚠️  Warning in pipeline_all_poly: {e}')
+    print(f'⚠️  Warning in market_processor: {e}')
+" || exit 1
+                        
+                        echo "Testing imports in src/data_pipeline.py..."
+                        \${VENV_PYTHON} -c "
+import sys
+sys.path.insert(0, 'src')
+try:
+    from data_pipeline import DataPipeline
+    print('✓ data_pipeline imports successfully')
+except ImportError as e:
+    print(f'❌ Import error in data_pipeline: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'⚠️  Warning in data_pipeline: {e}')
 " || exit 1
                         
                         echo "✓ All imports validated successfully"
@@ -360,26 +380,15 @@ else:
     print('⚠️  Warning: main does not have main() function')
 " || true
                         
-                        # Check get_open_markets.py
+                        # Check data_pipeline.py
                         \${VENV_PYTHON} -c "
 import sys
 sys.path.insert(0, 'src')
-import get_open_markets
-if hasattr(get_open_markets, 'main'):
-    print('✓ get_open_markets has main() function')
+from data_pipeline import DataPipeline
+if hasattr(DataPipeline, 'run'):
+    print('✓ DataPipeline has run() method')
 else:
-    print('⚠️  Warning: get_open_markets does not have main() function')
-" || true
-                        
-                        # Check pipeline_all_poly.py
-                        \${VENV_PYTHON} -c "
-import sys
-sys.path.insert(0, 'src')
-import pipeline_all_poly
-if hasattr(pipeline_all_poly, 'main') or hasattr(pipeline_all_poly, 'run_pipeline'):
-    print('✓ pipeline_all_poly has entry point function')
-else:
-    print('⚠️  Warning: pipeline_all_poly does not have entry point function')
+    print('⚠️  Warning: DataPipeline does not have run() method')
 " || true
                         
                         echo "✓ Script logic validation completed"
