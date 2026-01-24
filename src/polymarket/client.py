@@ -12,18 +12,36 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 import websocket
 import requests
+import pandas as pd
 from py_clob_client.constants import POLYGON
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import BookParams
 
 logger = logging.getLogger(__name__)
 
+# Disable verbose HTTP logging from urllib3, requests, and other HTTP libraries
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("py_clob_client").setLevel(logging.WARNING)
+
+# Also disable any root HTTP loggers
+for logger_name in logging.Logger.manager.loggerDict:
+    if any(name in logger_name.lower() for name in ['urllib', 'http', 'requests', 'clob']):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
 
 class PolymarketClient:
     """Client for interacting with Polymarket API"""
 
     def __init__(
-        self, host: str = "https://clob.polymarket.com", chain_id: int = POLYGON
+        self,
+        host: str = "https://clob.polymarket.com",
+        chain_id: int = POLYGON,
+        redis_enabled: bool = True,
+        redis_host: str = "localhost",
+        redis_port: int = 6379,
     ):
         """
         Initialize the Polymarket client.
@@ -31,6 +49,9 @@ class PolymarketClient:
         Args:
             host: Polymarket API host URL
             chain_id: Blockchain chain ID (default: POLYGON)
+            redis_enabled: Whether to publish order books to Redis (default: True)
+            redis_host: Redis host (default: localhost)
+            redis_port: Redis port (default: 6379)
         """
         self.host = host
         self.chain_id = chain_id
@@ -40,6 +61,22 @@ class PolymarketClient:
         self._websocket: Optional[websocket.WebSocketApp] = None
         self._ws_callback: Optional[Callable] = None
         self._ws_token_id: Optional[str] = None
+        
+        # Initialize Redis publisher
+        if redis_enabled:
+            try:
+                from .redis_publisher import RedisOrderBookPublisher
+                self.redis_publisher = RedisOrderBookPublisher(
+                    host=redis_host,
+                    port=redis_port,
+                    enabled=True,
+                )
+            except ImportError:
+                logger.warning("Redis module not available. Order book publishing to Redis is disabled.")
+                self.redis_publisher = None
+        else:
+            self.redis_publisher = None
+        
         self._initialize_client()
 
     def _initialize_client(self):
@@ -72,6 +109,7 @@ class PolymarketClient:
             unit=" markets",
             initial=0,
             dynamic_ncols=True,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
 
         while True:
@@ -84,19 +122,22 @@ class PolymarketClient:
                     or not response.get("data")
                 ):
                     pbar.close()
-                    self._print_completion_stats(all_markets, start_time)
                     break
 
                 markets = response.get("data", [])
                 if not markets:
                     pbar.close()
-                    self._print_completion_stats(all_markets, start_time)
                     break
 
                 all_markets.extend(markets)
-                # Update progress bar with current total
+                # Update progress bar with current total and rate
                 pbar.update(len(markets))
-                pbar.set_postfix({"total": len(all_markets)})
+                elapsed = (datetime.now() - start_time).total_seconds()
+                rate = len(all_markets) / elapsed if elapsed > 0 else 0
+                pbar.set_postfix({
+                    "total": len(all_markets),
+                    "rate": f"{rate:.1f} markets/s"
+                })
 
                 next_cursor = response.get("next_cursor")
 
@@ -104,12 +145,16 @@ class PolymarketClient:
                 if "next item should be greater than or equal to 0" in str(e):
                     # This is actually a successful completion
                     pbar.close()
-                    self._print_completion_stats(all_markets, start_time)
                     break
                 else:
                     pbar.close()
                     logger.error(f"Error fetching page: {str(e)}")
                     break
+
+        # Print final stats after progress bar closes
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.info(f"✓ Fetched {len(all_markets)} markets in {duration:.1f}s ({len(all_markets)/duration:.1f} markets/s)")
 
         return all_markets
 
@@ -136,7 +181,7 @@ class PolymarketClient:
 
     def get_order_book(self, token_id: str) -> Optional[Any]:
         """
-        Fetch order book for a single token.
+        Fetch order book for a single token and publish to Redis.
 
         Args:
             token_id: Token ID to fetch order book for
@@ -147,7 +192,25 @@ class PolymarketClient:
         if self.client is None:
             raise RuntimeError("Client not initialized")
         try:
-            return self.client.get_order_book(token_id)
+            order_book = self.client.get_order_book(token_id)
+            
+            # Publish to Redis if available
+            if order_book and self.redis_publisher:
+                try:
+                    # Extract bids and asks from OrderBookSummary
+                    bids = order_book.bids if hasattr(order_book, "bids") else []
+                    asks = order_book.asks if hasattr(order_book, "asks") else []
+                    
+                    self.redis_publisher.publish_order_book(
+                        token_id=token_id,
+                        bids=bids,
+                        asks=asks,
+                        timestamp=datetime.now(),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to publish order book to Redis: {str(e)}")
+            
+            return order_book
         except Exception as e:
             logger.error(f"Error fetching order book for token {token_id}: {str(e)}")
             return None
@@ -199,6 +262,7 @@ class PolymarketClient:
             total=len(book_params),
             unit=" books",
             dynamic_ncols=True,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
 
         try:
@@ -207,6 +271,25 @@ class PolymarketClient:
             for idx, order_book in enumerate(order_books):
                 if idx in market_token_map:
                     market_info = market_token_map[idx]
+                    token_id = market_info["token"].get("token_id")
+                    
+                    # Publish to Redis if available
+                    if order_book and token_id and self.redis_publisher:
+                        try:
+                            bids = order_book.bids if hasattr(order_book, "bids") else []
+                            asks = order_book.asks if hasattr(order_book, "asks") else []
+                            condition_id = market_info["market"].get("condition_id")
+                            
+                            self.redis_publisher.publish_order_book(
+                                token_id=token_id,
+                                bids=bids,
+                                asks=asks,
+                                timestamp=datetime.now(),
+                                condition_id=condition_id,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to publish order book to Redis: {str(e)}")
+                    
                     order_books_data.append(
                         {
                             "market": market_info["market"],
@@ -457,6 +540,20 @@ class PolymarketClient:
                                 "hash": data.get("hash", ""),  # For sanity checks
                             }
                             logger.info(f"Received BOOK event for token {asset_id[:20]}... with {len(bids)} bids and {len(asks)} asks")
+                            
+                            # Publish to Redis if available
+                            if self.redis_publisher:
+                                try:
+                                    self.redis_publisher.publish_order_book(
+                                        token_id=asset_id,
+                                        bids=bids,
+                                        asks=asks,
+                                        timestamp=timestamp,
+                                        condition_id=data.get("market", ""),
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to publish order book to Redis: {str(e)}")
+                            
                             callback(order_book_data, timestamp)
                     # Handle price_change events (real-time price updates)
                     elif data.get("event_type") == "price_change" and "price_changes" in data:
@@ -656,15 +753,19 @@ class PolymarketClient:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: Optional[int] = None,
+        save_to_csv: bool = True,
+        filename: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch trades from Polymarket Data API.
+        Fetch trades from Polymarket Data API and optionally save to CSV snapshot.
         
         Args:
             condition_id: Filter trades by market/condition ID (optional)
             start_time: Start time for filtering trades (optional)
             end_time: End time for filtering trades (optional)
             limit: Maximum number of trades to return (optional)
+            save_to_csv: Whether to save trades to CSV in storage/{env} (default: True)
+            filename: Custom filename (default: trades-snapshot.csv)
             
         Returns:
             List of trade dictionaries with timestamps converted to datetime objects
@@ -728,7 +829,40 @@ class PolymarketClient:
                 elif "market" in trade:
                     trade["condition_id"] = trade["market"]
             
-            logger.info(f"Fetched {len(trades)} trades from Data API")
+            if isinstance(trades, list) and len(trades) > 0:
+                logger.info(f"✓ Fetched {len(trades)} trades from Data API")
+            
+            # Save to CSV if requested
+            if save_to_csv and trades:
+                try:
+                    from src.utils import get_storage_path
+                    
+                    # Determine output path
+                    if filename is None:
+                        filename = "trades-snapshot.csv"
+                    
+                    storage_dir = get_storage_path()
+                    os.makedirs(storage_dir, exist_ok=True)
+                    output_path = os.path.join(storage_dir, filename)
+                    
+                    # Convert trades to DataFrame
+                    # Handle datetime objects for CSV serialization
+                    trades_for_df = []
+                    for trade in trades:
+                        trade_copy = trade.copy()
+                        # Convert datetime to ISO string for CSV
+                        if "timestamp" in trade_copy and isinstance(trade_copy["timestamp"], datetime):
+                            trade_copy["timestamp"] = trade_copy["timestamp"].isoformat()
+                        trades_for_df.append(trade_copy)
+                    
+                    df = pd.DataFrame(trades_for_df)
+                    
+                    # Save to CSV
+                    df.to_csv(output_path, index=False)
+                    logger.info(f"Saved {len(trades)} trades to {output_path}")
+                except Exception as e:
+                    logger.warning(f"Error saving trades snapshot to CSV: {str(e)}")
+            
             return trades
             
         except requests.exceptions.RequestException as e:
@@ -813,13 +947,3 @@ class PolymarketClient:
         logger.info(f"Calculated volume for {len(volume_data)} market(s)")
         return volume_data
 
-    @staticmethod
-    def _print_completion_stats(markets: list, start_time: datetime):
-        """Print completion statistics"""
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        logger.info("Fetch completed successfully!")
-        logger.info(f"Total markets fetched: {len(markets)}")
-        logger.info(f"Time taken: {duration:.2f} seconds")
-        if duration > 0:
-            logger.info(f"Average rate: {len(markets)/duration:.1f} markets/second")

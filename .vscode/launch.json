@@ -14,12 +14,46 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Python: Data Pipeline",
+            "name": "Python: Data Pipeline - Trade Data",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
             "console": "integratedTerminal",
             "justMyCode": true,
+            "args": [
+                "--trade_data"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Data Pipeline - Order Book",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--order_book"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Data Pipeline - Both",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--trade_data",
+                "--order_book"
+            ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },

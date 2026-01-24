@@ -1,0 +1,21 @@
+/* Dashboard layout and container styles */
+.dashboard-layout {
+  display: flex;
+  min-height: 100vh;
+  position: relative;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  margin-left: 0;
+  flex: 1;
+  padding: 20px;
+  padding-top: 80px;
+  transition: margin-left 0.3s ease;
+}
+
+.left-panel:not([style*="left: -250px"]) ~ .container {
+  margin-left: 250px;
+}
