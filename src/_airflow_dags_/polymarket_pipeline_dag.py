@@ -322,13 +322,10 @@ def upload_csv_to_trade_data(**context):
     
     engine = create_engine(connection_string, pool_pre_ping=True, echo=False)
     
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info(f"Connected to database: {db_name}")
-    except SQLAlchemyError as e:
-        logger.error(f"Error connecting to database {db_name}: {str(e)}")
-        raise
+    # Test connection - will raise error if database doesn't exist
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    logger.info(f"Connected to database: {db_name} on {db_host}:{db_port}")
     
     # Create trade_data table if it doesn't exist
     try:

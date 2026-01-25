@@ -84,6 +84,7 @@ class DataPipeline:
         
         self.client = client or PolymarketClient()
         self.processor = processor or MarketDataProcessor()
+        # DatabaseManager will raise error if database doesn't exist - don't catch it here
         self.db_manager = db_manager or DatabaseManager()
         self.date_today = datetime.now().strftime("%Y%m%d")
 
@@ -112,16 +113,13 @@ class DataPipeline:
                 self.processor.save_markets_to_csv(markets, csv_file)
                 
                 # Upload CSV to trade_data table in polymarket database
-                try:
-                    logger.info("Uploading CSV to trade_data table in polymarket database...")
-                    count = self.db_manager.upload_csv_to_trade_data(
-                        csv_path=csv_file,
-                        db_name="polymarket",
-                        table_name="trade_data"
-                    )
-                    logger.info(f"Uploaded {count} records to trade_data table")
-                except Exception as e:
-                    logger.warning(f"Failed to upload to trade_data table: {str(e)}")
+                logger.info("Uploading CSV to trade_data table in polymarket database...")
+                count = self.db_manager.upload_csv_to_trade_data(
+                    csv_path=csv_file,
+                    db_name="polymarket",
+                    table_name="trade_data"
+                )
+                logger.info(f"Uploaded {count} records to trade_data table")
                 
                 logger.info(f"Collected {len(markets)} markets")
                 return True
@@ -199,12 +197,6 @@ class DataPipeline:
                     "order_books", self.date_today
                 )
                 self.processor.save_order_books_to_csv(order_books_data, output_file)
-                
-                # Save to database
-                try:
-                    self.db_manager.insert_order_books(order_books_data)
-                except Exception as e:
-                    logger.warning(f"Database insert failed: {str(e)}")
                 
                 logger.info(f"Collected order books for {len(order_books_data)} tokens")
                 logger.info(f"Data saved to {output_file}")
