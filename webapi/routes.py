@@ -211,98 +211,70 @@ def _get_search_engine():
         )
     return _search_engine_cache
 
-def _search_trade_data(query: str, limit: int = 10, include_inactive: bool = False) -> List[Dict[str, Any]]:
+def _search_gamma_markets(query: str, limit: int = 10, include_inactive: bool = False) -> List[Dict[str, Any]]:
     """
-    Search trade_data table for markets matching the query in the "question" field.
-    
+    Search gamma_markets table for markets matching the query in the "question" field.
+
     Args:
         query: Search query string
         limit: Maximum number of results to return
-        include_inactive: If True, include inactive/closed/archived/not accepting orders bets
-        
+        include_inactive: If True, include inactive/closed/archived/not accepting orders
+
     Returns:
         List of matching market dictionaries
     """
     if not query or len(query.strip()) < 2:
         return []
-    
+
     try:
         engine = _get_search_engine()
-        
-        # Build search query with optional filters
+
         if include_inactive:
-            # No filters - include all bets
-            # Order by: volume DESC (highest first)
             search_query = text("""
-                SELECT 
-                    condition_id, question_id, question, description, market_slug, category,
-                    active, closed, archived, NULL as accepting_orders, NULL as accepting_order_timestamp,
-                    NULL as enable_order_book, NULL as minimum_order_size, NULL as minimum_tick_size, 
-                    NULL as min_incentive_size, NULL as max_incentive_spread, NULL as maker_base_fee, 
-                    NULL as taker_base_fee, end_date_iso, NULL as game_start_time, NULL as seconds_delay,
-                    fpmm_live as fpmm, icon, image, NULL as neg_risk, NULL as neg_risk_market_id,
-                    NULL as neg_risk_request_id, NULL as is_50_50_outcome, NULL as token_0_id,
-                    NULL as token_0_outcome, NULL as token_0_price, NULL as token_0_winner, NULL as token_1_id,
-                    NULL as token_1_outcome, NULL as token_1_price, NULL as token_1_winner, NULL as rewards_rates,
-                    rewards_min_size, rewards_max_spread, notifications_enabled, tags,
-                    COALESCE(volume, 0) as volume, download_date, created_at
-                FROM trade_data
+                SELECT question
+                FROM gamma_markets
                 WHERE question ILIKE :query_pattern
-                ORDER BY COALESCE(volume, 0) DESC
+                ORDER BY COALESCE(volume_24hr, 0) DESC
                 LIMIT :limit
             """)
         else:
-            # Filter: closed = false, active = true, archived = false, accepting_orders = true
-            # Order by: volume DESC (highest first)
             search_query = text("""
-                SELECT 
-                    condition_id, question_id, question, description, market_slug, category,
-                    active, closed, archived, accepting_orders, accepting_order_timestamp,
-                    enable_order_book, minimum_order_size, minimum_tick_size, min_incentive_size,
-                    max_incentive_spread, maker_base_fee, taker_base_fee, end_date_iso,
-                    game_start_time, seconds_delay, fpmm, icon, image, neg_risk,
-                    neg_risk_market_id, neg_risk_request_id, is_50_50_outcome, token_0_id,
-                    token_0_outcome, token_0_price, token_0_winner, token_1_id,
-                    token_1_outcome, token_1_price, token_1_winner,                     rewards_rates,
-                    rewards_min_size, rewards_max_spread, notifications_enabled, tags,
-                    COALESCE(volume, 0) as volume, download_date, created_at
-                FROM trade_data
+                SELECT question
+                FROM gamma_markets
                 WHERE active = true
                     AND closed = false
                     AND archived = false
                     AND accepting_orders = true
                     AND question ILIKE :query_pattern
-                ORDER BY COALESCE(volume, 0) DESC
+                ORDER BY COALESCE(volume_24hr, 0) DESC
                 LIMIT :limit
             """)
-        
+
         query_pattern = f"%{query.strip()}%"
-        
+
         with engine.connect() as conn:
             results = conn.execute(
                 search_query,
                 {"query_pattern": query_pattern, "limit": limit}
             )
-            
-            # Convert results to list of dictionaries
+
             columns = results.keys()
             results_list = []
             for row in results:
                 row_dict = {}
                 for col in columns:
                     value = getattr(row, col)
-                    # Handle None and NaN values
                     if value is None or (isinstance(value, float) and pd.isna(value)):
                         row_dict[col] = None
                     else:
                         row_dict[col] = value
                 results_list.append(row_dict)
-            
-            logger.info(f"Search for '{query}' found {len(results_list)} results from trade_data table")
+
+            logger.info(f"Search for '{query}' found {len(results_list)} results from gamma_markets table")
             return results_list
-            
+
     except Exception as e:
-        logger.error(f"Error searching trade_data: {str(e)}", exc_info=True)
+        logger.error(f"Error searching gamma_markets: {str(e)}", exc_info=True)
         return []
 
 
@@ -313,14 +285,14 @@ async def search_markets(
     include_inactive: bool = Query(False, description="Include inactive/closed/archived/not accepting orders bets"),
 ):
     """
-    Search markets in trade_data table.
+    Search markets in gamma_markets table.
     Returns top results matching the query in the question field.
-    By default, only returns active, not closed, accepting orders, not archived bets.
+    By default, only returns active, not closed, accepting orders, not archived.
     Connects to the appropriate database based on environment (dev/test/prod).
     """
     try:
         logger.info(f"Search request: query='{q}', limit={limit}, include_inactive={include_inactive}")
-        results = _search_trade_data(q, limit=limit, include_inactive=include_inactive)
+        results = _search_gamma_markets(q, limit=limit, include_inactive=include_inactive)
         logger.info(f"Search returned {len(results)} results for query '{q}'")
         return {
             "query": q,

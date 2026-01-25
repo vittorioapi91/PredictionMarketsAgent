@@ -190,6 +190,8 @@ class MarketDataProcessor:
             filename = f"open_markets_{date}.csv"
         elif subpath == "order_books":
             filename = f"order_books_{date}.csv"
+        elif subpath == "gamma_api":
+            filename = f"gamma_api_markets_{date}.csv"
         else:
             filename = f"markets_{date}.csv"
 
@@ -249,6 +251,7 @@ class MarketDataProcessor:
         raw_data_dir = get_storage_path("raw_data")
         open_markets_dir = get_storage_path("open_markets")
         order_books_dir = get_storage_path("order_books")
+        gamma_api_dir = get_storage_path("gamma_api")
         env_storage_dir = get_storage_path()
 
         for directory in [
@@ -256,5 +259,6 @@ class MarketDataProcessor:
             raw_data_dir,
             open_markets_dir,
             order_books_dir,
+            gamma_api_dir,
         ]:
             Path(directory).mkdir(parents=True, exist_ok=True)

@@ -20,12 +20,30 @@
             "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": [
-                "--trade_data"
-            ],
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
+            "args": ["--trade_data"],
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Data Pipeline - Gamma",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": ["--gamma"],
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Data Pipeline - Trade Data + Gamma",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": ["--trade_data", "--gamma"],
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
             "cwd": "${workspaceFolder}"
         },
         {
@@ -44,19 +62,14 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Python: Data Pipeline - Both",
+            "name": "Python: Data Pipeline - Trade Data + Order Book",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/src/polymarket/data_pipeline.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": [
-                "--trade_data",
-                "--order_book"
-            ],
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
+            "args": ["--trade_data", "--order_book"],
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
             "cwd": "${workspaceFolder}"
         },
         {
@@ -89,5 +102,5 @@
             },
             "cwd": "${workspaceFolder}"
         }
-            ]
-    }
+    ]
+}

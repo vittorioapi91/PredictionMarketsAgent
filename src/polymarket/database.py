@@ -3,9 +3,18 @@ Database operations for PredictionMarketsAgent
 
 Table Data Sources:
 -------------------
-- trade_data: Market data from Polymarket CLOB API (https://clob.polymarket.com/)
-  - Fetched via: src.polymarket.client.fetch_all_markets()
-  - Uploaded via: src.polymarket.data_pipeline.collect_data()
+- trade_data: CLOB market data (https://clob.polymarket.com).
+  - Fetched via: PolymarketClient.fetch_all_markets(); saved to raw_data CSV, then uploaded here.
+  - Uploaded via: data_pipeline.collect_trade_data() or Airflow task upload_trade_data_to_sql.
+  - Used for filter_open_markets / order books.
+
+- gamma_markets: Flattened market data from Gamma API (https://gamma-api.polymarket.com/events).
+  - Fetched via: gamma_client.fetch_all_events() (all events, include_closed=True).
+  - Flattened via: gamma_events_to_trade_data_rows(); saved to gamma_api CSV, then uploaded here.
+  - Uploaded via: data_pipeline.collect_gamma() or Airflow task upload_gamma_markets_to_sql.
+  - Daily refresh: table is truncated before each upload (1am DAG); CSVs are kept on disk for analysis.
+  - Search queries gamma_markets; filters active-only by default.
+  - All columns use snake_case (condition_id, question_id, market_slug, volume_24hr, etc.).
 """
 
 import os
@@ -160,7 +169,100 @@ class DatabaseManager:
         logger.info(f"Connected to database: {db_name} on {self.db_host}:{self.db_port}")
         
         # Create table if it doesn't exist (based on table_name)
-        if table_name == "trade_data":
+        if table_name == "gamma_markets":
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS gamma_markets (
+                            id SERIAL PRIMARY KEY,
+                            condition_id VARCHAR(255),
+                            question_id VARCHAR(255),
+                            question TEXT,
+                            description TEXT,
+                            market_slug VARCHAR(255),
+                            category VARCHAR(255),
+                            active BOOLEAN,
+                            closed BOOLEAN,
+                            archived BOOLEAN,
+                            accepting_orders BOOLEAN,
+                            restricted BOOLEAN,
+                            volume NUMERIC,
+                            volume_num NUMERIC,
+                            volume_24hr NUMERIC,
+                            volume_1wk NUMERIC,
+                            volume_1mo NUMERIC,
+                            volume_1yr NUMERIC,
+                            volume_1wk_amm NUMERIC,
+                            volume_1mo_amm NUMERIC,
+                            volume_1yr_amm NUMERIC,
+                            volume_1wk_clob NUMERIC,
+                            volume_1mo_clob NUMERIC,
+                            volume_1yr_clob NUMERIC,
+                            liquidity NUMERIC,
+                            liquidity_num NUMERIC,
+                            liquidity_amm NUMERIC,
+                            liquidity_clob NUMERIC,
+                            open_interest NUMERIC,
+                            competitive NUMERIC,
+                            spread NUMERIC,
+                            one_day_price_change NUMERIC,
+                            one_hour_price_change NUMERIC,
+                            one_week_price_change NUMERIC,
+                            one_month_price_change NUMERIC,
+                            one_year_price_change NUMERIC,
+                            last_trade_price NUMERIC,
+                            best_bid NUMERIC,
+                            best_ask NUMERIC,
+                            image TEXT,
+                            icon TEXT,
+                            end_date_iso TIMESTAMP,
+                            clob_token_ids TEXT,
+                            outcomes TEXT,
+                            outcome_prices TEXT,
+                            token_0_id VARCHAR(255),
+                            token_0_outcome TEXT,
+                            token_0_price NUMERIC,
+                            token_0_winner BOOLEAN,
+                            token_1_id VARCHAR(255),
+                            token_1_outcome TEXT,
+                            token_1_price NUMERIC,
+                            token_1_winner BOOLEAN,
+                            download_date DATE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    for idx_sql in [
+                        "CREATE INDEX IF NOT EXISTS idx_gamma_markets_question ON gamma_markets(question)",
+                        "CREATE INDEX IF NOT EXISTS idx_gamma_markets_condition_id ON gamma_markets(condition_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_gamma_markets_volume ON gamma_markets(volume) WHERE volume IS NOT NULL",
+                        "CREATE INDEX IF NOT EXISTS idx_gamma_markets_download_date ON gamma_markets(download_date)",
+                    ]:
+                        conn.execute(text(idx_sql))
+                    # Add any missing columns (migration for existing gamma_markets tables)
+                    _gamma_extra_columns = [
+                        ("volume_1wk", "NUMERIC"), ("volume_1mo", "NUMERIC"), ("volume_1yr", "NUMERIC"),
+                        ("volume_1wk_amm", "NUMERIC"), ("volume_1mo_amm", "NUMERIC"), ("volume_1yr_amm", "NUMERIC"),
+                        ("volume_1wk_clob", "NUMERIC"), ("volume_1mo_clob", "NUMERIC"), ("volume_1yr_clob", "NUMERIC"),
+                        ("liquidity", "NUMERIC"), ("liquidity_num", "NUMERIC"), ("liquidity_amm", "NUMERIC"), ("liquidity_clob", "NUMERIC"),
+                        ("open_interest", "NUMERIC"), ("competitive", "NUMERIC"), ("spread", "NUMERIC"),
+                        ("one_day_price_change", "NUMERIC"), ("one_hour_price_change", "NUMERIC"),
+                        ("one_week_price_change", "NUMERIC"), ("one_month_price_change", "NUMERIC"), ("one_year_price_change", "NUMERIC"),
+                        ("last_trade_price", "NUMERIC"), ("best_bid", "NUMERIC"), ("best_ask", "NUMERIC"),
+                    ]
+                    for col, typ in _gamma_extra_columns:
+                        r = conn.execute(text("""
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_schema = 'public' AND table_name = 'gamma_markets' AND column_name = :col
+                        """), {"col": col})
+                        if r.fetchone() is None:
+                            conn.execute(text(f"ALTER TABLE gamma_markets ADD COLUMN {col} {typ}"))
+                            logger.info("Added column gamma_markets.%s", col)
+                    conn.commit()
+                logger.info("Table gamma_markets created/verified")
+            except SQLAlchemyError as e:
+                logger.error(f"Error creating table: {str(e)}")
+                raise
+        elif table_name == "trade_data":
             try:
                 with engine.connect() as conn:
                     conn.execute(text(f"""
@@ -182,7 +284,6 @@ class DatabaseManager:
                             download_date DATE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """))
-                    # Create indexes (simplified for brevity)
                     for idx_sql in [
                         f"CREATE INDEX IF NOT EXISTS idx_{table_name}_question ON {table_name}(question)",
                         f"CREATE INDEX IF NOT EXISTS idx_{table_name}_condition_id ON {table_name}(condition_id)",
@@ -259,9 +360,10 @@ class DatabaseManager:
                      "neg_risk", "is_50_50_outcome", "token_0_winner", "token_1_winner", 
                      "notifications_enabled", "restricted", "fpmm_live"]
         numeric_cols = ["volume", "volume_num", "volume_24hr", "volume_1wk", "volume_1mo", "volume_1yr",
-                       "liquidity", "liquidity_num", "liquidity_amm", "liquidity_clob",
                        "volume_1wk_amm", "volume_1mo_amm", "volume_1yr_amm",
                        "volume_1wk_clob", "volume_1mo_clob", "volume_1yr_clob",
+                       "liquidity", "liquidity_num", "liquidity_amm", "liquidity_clob",
+                       "open_interest",
                        "minimum_order_size", "minimum_tick_size", "min_incentive_size", "max_incentive_spread",
                        "maker_base_fee", "taker_base_fee", "token_0_price", "token_1_price",
                        "competitive", "spread", "one_day_price_change", "one_hour_price_change",
@@ -286,11 +388,44 @@ class DatabaseManager:
         # Add download_date if missing
         if "download_date" not in df_prepared.columns:
             df_prepared["download_date"] = download_date
+
+        # For gamma_markets, restrict to table columns only (snake_case)
+        if table_name == "gamma_markets":
+            _gamma_cols = [
+                "condition_id", "question_id", "question", "description", "market_slug", "category",
+                "active", "closed", "archived", "accepting_orders", "restricted",
+                "volume", "volume_num", "volume_24hr",
+                "volume_1wk", "volume_1mo", "volume_1yr",
+                "volume_1wk_amm", "volume_1mo_amm", "volume_1yr_amm",
+                "volume_1wk_clob", "volume_1mo_clob", "volume_1yr_clob",
+                "liquidity", "liquidity_num", "liquidity_amm", "liquidity_clob",
+                "open_interest", "competitive", "spread",
+                "one_day_price_change", "one_hour_price_change", "one_week_price_change",
+                "one_month_price_change", "one_year_price_change",
+                "last_trade_price", "best_bid", "best_ask",
+                "image", "icon", "end_date_iso",
+                "clob_token_ids", "outcomes", "outcome_prices",
+                "token_0_id", "token_0_outcome", "token_0_price", "token_0_winner",
+                "token_1_id", "token_1_outcome", "token_1_price", "token_1_winner",
+                "download_date",
+            ]
+            _existing = [c for c in _gamma_cols if c in df_prepared.columns]
+            df_prepared = df_prepared[_existing].copy()
         
         # Batch insert
         batch_size = 10000
         total_records = len(df_prepared)
         inserted = 0
+
+        if table_name == "gamma_markets":
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("TRUNCATE TABLE gamma_markets RESTART IDENTITY"))
+                    conn.commit()
+                logger.info("Truncated gamma_markets (daily refresh), inserting fresh data")
+            except SQLAlchemyError as e:
+                logger.error(f"Failed to truncate gamma_markets: {e}")
+                raise
         
         try:
             logger.info(f"Inserting {total_records} records in batches of {batch_size}...")
@@ -339,6 +474,26 @@ class DatabaseManager:
             csv_path: Path to the CSV file
             db_name: Database name (default: "polymarket")
             table_name: Table name (default: "trade_data")
+
+        Returns:
+            Number of records inserted
+        """
+        return self.upload_csv_to_table(csv_path, db_name, table_name)
+
+    def upload_csv_to_gamma_markets(
+        self,
+        csv_path: str,
+        db_name: str = "polymarket",
+        table_name: str = "gamma_markets",
+    ) -> int:
+        """
+        Upload CSV data to the gamma_markets table.
+        CSV must contain snake_case columns (condition_id, question_id, market_slug, volume_24hr, etc.).
+
+        Args:
+            csv_path: Path to the CSV file
+            db_name: Database name (default: "polymarket")
+            table_name: Table name (default: "gamma_markets")
 
         Returns:
             Number of records inserted

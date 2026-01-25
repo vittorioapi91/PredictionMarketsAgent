@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.polymarket import PolymarketClient, MarketDataProcessor, DatabaseManager
+from src.polymarket.gamma_client import fetch_all_events, gamma_events_to_trade_data_rows
 from src.utils import load_environment_file, get_environment
 
 # Set up logging
@@ -16,6 +17,40 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+def run_gamma_fetch_and_save(
+    processor: MarketDataProcessor,
+    date_today: str,
+    *,
+    limit: int = 100,
+    include_closed: bool = True,
+) -> Optional[str]:
+    """
+    Shared Gamma fetch + flatten + save. Used by both CLI and Airflow DAG.
+
+    Fetches all events from Gamma API (all pages), flattens to markets,
+    saves to gamma_api CSV. Logs pagination verification (partial vs full last page).
+
+    Args:
+        processor: MarketDataProcessor for paths and save.
+        date_today: YYYYMMDD string.
+        limit: Page size for Gamma API.
+        include_closed: If True, fetch all events (default).
+
+    Returns:
+        Path to saved CSV, or None if fetch/flatten produced no data.
+    """
+    events = fetch_all_events(limit=limit, include_closed=include_closed)
+    if not events:
+        return None
+    markets = gamma_events_to_trade_data_rows(events)
+    if not markets:
+        return None
+    csv_file = processor.get_output_path("gamma_api", date_today)
+    processor.save_markets_to_csv(markets, csv_file, source="gamma-api")
+    logger.info("Collected %d markets from %d Gamma events, saved to %s", len(markets), len(events), csv_file)
+    return csv_file
 
 
 class DataPipeline:
@@ -97,37 +132,63 @@ class DataPipeline:
         except Exception as e:
             logger.warning(f"Database setup failed: {str(e)}")
 
-    def collect_data(self) -> bool:
+    def collect_trade_data(self) -> bool:
         """
-        Step 1: Collect all Polymarket data and save to CSV.
+        Collect CLOB market data and upload to trade_data table.
 
-        Returns:
-            True if successful, False otherwise
+        Fetches markets via PolymarketClient (CLOB API), saves to raw_data CSV,
+        uploads to trade_data. Used for filter_open_markets / order books.
         """
         try:
             markets = self.client.fetch_all_markets()
-
-            if markets:
-                # Save to CSV
-                csv_file = self.processor.get_output_path("raw_data", self.date_today)
-                self.processor.save_markets_to_csv(markets, csv_file, source="clob-api")
-                
-                # Upload CSV to trade_data table in polymarket database
-                logger.info("Uploading CSV to trade_data table in polymarket database...")
-                count = self.db_manager.upload_csv_to_trade_data(
-                    csv_path=csv_file,
-                    db_name="polymarket",
-                    table_name="trade_data"
-                )
-                logger.info(f"Uploaded {count} records to trade_data table")
-                
-                logger.info(f"Collected {len(markets)} markets")
-                return True
-            else:
-                logger.warning("No markets collected")
+            if not markets:
+                logger.warning("No CLOB markets fetched")
                 return False
+
+            csv_file = self.processor.get_output_path("raw_data", self.date_today)
+            self.processor.save_markets_to_csv(markets, csv_file, source="clob-api")
+
+            logger.info("Uploading CSV to trade_data table in polymarket database...")
+            count = self.db_manager.upload_csv_to_trade_data(
+                csv_path=csv_file,
+                db_name="polymarket",
+                table_name="trade_data",
+            )
+            logger.info(f"Uploaded {count} records to trade_data table")
+            logger.info(f"Collected {len(markets)} CLOB markets")
+            return True
         except Exception as e:
-            logger.error(f"Error collecting data: {str(e)}")
+            logger.error(f"Error collecting trade data: {str(e)}")
+            return False
+
+    def collect_gamma(self) -> bool:
+        """
+        Collect Gamma API events and upload to gamma_markets table.
+
+        Uses run_gamma_fetch_and_save (shared with DAG), then uploads to DB.
+        Search uses active-only by default.
+        """
+        try:
+            csv_file = run_gamma_fetch_and_save(
+                self.processor,
+                self.date_today,
+                limit=100,
+                include_closed=True,
+            )
+            if not csv_file:
+                logger.warning("No Gamma data to upload")
+                return False
+
+            logger.info("Uploading CSV to gamma_markets table in polymarket database...")
+            count = self.db_manager.upload_csv_to_gamma_markets(
+                csv_path=csv_file,
+                db_name="polymarket",
+                table_name="gamma_markets",
+            )
+            logger.info("Uploaded %d records to gamma_markets table", count)
+            return True
+        except Exception as e:
+            logger.error("Error collecting Gamma data: %s", e)
             return False
 
 
@@ -215,6 +276,7 @@ class DataPipeline:
     def run(
         self,
         trade_data: bool = False,
+        gamma: bool = False,
         order_book: bool = False,
         filter_markets: bool = True,
     ) -> bool:
@@ -222,50 +284,52 @@ class DataPipeline:
         Run the pipeline with optional switches.
 
         Args:
-            trade_data: If True, download trade data to CSV and insert into DB
-            order_book: If True, collect order books
+            trade_data: If True, fetch CLOB markets -> raw_data CSV -> trade_data table
+            gamma: If True, fetch Gamma events -> gamma_api CSV -> gamma_markets table
+            order_book: If True, collect order books (uses raw_data from trade_data)
             filter_markets: If True, filter open markets (default: True, only used when running full pipeline)
 
         Returns:
             True if pipeline completed successfully, False otherwise
-            
+
         Raises:
             ValueError: If no switches are provided
         """
         start_time = datetime.now()
-        
-        # Require at least one switch
-        if not trade_data and not order_book:
+
+        if not trade_data and not gamma and not order_book:
             raise ValueError(
-                "At least one switch must be provided. Use --trade_data and/or --order_book. "
+                "At least one switch must be provided. Use --trade_data, --gamma, and/or --order_book. "
                 "Run with --help for usage information."
             )
-        
-        # Run specific steps based on switches
+
         logger.info("Starting Polymarket data collection pipeline (selective)...")
-        
+
         try:
-            # Setup directories
             self.setup_directories()
-            
             success = True
-            
+
             if trade_data:
-                logger.info("Running trade_data step...")
-                if not self.collect_data():
+                logger.info("Running trade_data step (CLOB -> trade_data)...")
+                if not self.collect_trade_data():
                     logger.error("Trade data collection failed")
                     success = False
-            
+
+            if gamma:
+                logger.info("Running gamma step (Gamma API -> gamma_markets)...")
+                if not self.collect_gamma():
+                    logger.error("Gamma collection failed")
+                    success = False
+
             if order_book:
                 logger.info("Running order_book step...")
-                # Order books require open markets, so filter first if needed
-                if not hasattr(self, '_open_markets_loaded'):
+                if not hasattr(self, "_open_markets_loaded"):
                     if not self.filter_open_markets():
                         logger.warning("Could not filter open markets, order book collection may fail")
                 if not self.collect_order_books():
                     logger.error("Order book collection failed")
                     success = False
-            
+
             duration = (datetime.now() - start_time).total_seconds()
             if success:
                 logger.info(f"Pipeline completed successfully - {self.date_today}")
@@ -285,39 +349,44 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download trade data to CSV and insert into DB
+  # CLOB -> trade_data table
   python -m src.polymarket.data_pipeline --trade_data
 
-  # Collect order books
-  python -m src.polymarket.data_pipeline --order_book
+  # Gamma API -> gamma_markets table
+  python -m src.polymarket.data_pipeline --gamma
 
-  # Fetch builders volume data
-  python -m src.polymarket.data_pipeline --builders_volume
+  # Both
+  python -m src.polymarket.data_pipeline --trade_data --gamma
 
-  # Run multiple steps
-  python -m src.polymarket.data_pipeline --trade_data --order_book --builders_volume
+  # Order books (uses raw_data from --trade_data)
+  python -m src.polymarket.data_pipeline --trade_data --order_book
 
-Note: At least one switch (--trade_data, --order_book, or --builders_volume) must be provided.
+Note: At least one of --trade_data, --gamma, or --order_book must be provided.
         """
     )
-    
+
     parser.add_argument(
-        '--trade_data',
-        action='store_true',
-        help='Download trade data to CSV and insert into trade_data table in polymarket database'
+        "--trade_data",
+        action="store_true",
+        help="Fetch CLOB markets -> raw_data CSV -> trade_data table",
     )
-    
     parser.add_argument(
-        '--order_book',
-        action='store_true',
-        help='Collect order books for open markets'
+        "--gamma",
+        action="store_true",
+        help="Fetch Gamma events -> gamma_api CSV -> gamma_markets table",
     )
-    
+    parser.add_argument(
+        "--order_book",
+        action="store_true",
+        help="Collect order books for open markets (uses raw_data from --trade_data)",
+    )
+
     args = parser.parse_args()
-    
+
     pipeline = DataPipeline()
     success = pipeline.run(
         trade_data=args.trade_data,
+        gamma=args.gamma,
         order_book=args.order_book,
     )
     
