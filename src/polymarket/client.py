@@ -92,6 +92,7 @@ class PolymarketClient:
             host=self.host, key=private_key, chain_id=self.chain_id
         )
 
+
     def fetch_all_markets(self) -> list:
         """
         Fetch all market data from Polymarket API with pagination support.

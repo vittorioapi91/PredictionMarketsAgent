@@ -9,14 +9,17 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from pathlib import Path
+from sqlalchemy import text
 try:
     from src.polymarket import PolymarketClient
+    from src.polymarket.database import DatabaseManager
     from src.utils import get_storage_path, get_environment
 except ImportError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from src.polymarket import PolymarketClient
+    from src.polymarket.database import DatabaseManager
     from src.utils import get_storage_path, get_environment
 
 logger = logging.getLogger(__name__)
@@ -26,11 +29,22 @@ router = APIRouter()
 # Initialize client (will be set by server)
 _client: Optional[PolymarketClient] = None
 
+# Initialize database manager (lazy initialization)
+_db_manager: Optional[DatabaseManager] = None
+
 
 def set_client(client: PolymarketClient):
     """Set the Polymarket client instance"""
     global _client
     _client = client
+
+
+def _get_db_manager() -> DatabaseManager:
+    """Get or create database manager instance"""
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+    return _db_manager
 
 
 @router.get("/health")
@@ -175,67 +189,36 @@ async def get_volume(
         raise HTTPException(status_code=500, detail=f"Error fetching volume: {str(e)}")
 
 
-# Cache for CSV data to avoid reloading on every search
-_csv_cache: Optional[pd.DataFrame] = None
-_csv_cache_path: Optional[str] = None
+# Cache database engine to avoid recreating connections
+_search_engine_cache = None
 
+def _get_search_engine():
+    """Get or create a cached database engine for search queries"""
+    global _search_engine_cache
+    if _search_engine_cache is None:
+        db_manager = _get_db_manager()
+        connection_string = (
+            f"postgresql://{db_manager.db_user}:{db_manager.db_password}@"
+            f"{db_manager.db_host}:{db_manager.db_port}/polymarket"
+        )
+        from sqlalchemy import create_engine
+        _search_engine_cache = create_engine(
+            connection_string, 
+            pool_pre_ping=True, 
+            echo=False,
+            pool_size=5,
+            max_overflow=10
+        )
+    return _search_engine_cache
 
-def _load_csv_data() -> pd.DataFrame:
-    """Load CSV data with caching"""
-    global _csv_cache, _csv_cache_path
-    
-    # Try multiple paths to find the CSV file
-    possible_paths = []
-    
-    # Path 1: Absolute path from project root (webapi/ is 2 levels up from routes.py)
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    possible_paths.append(os.path.join(project_root, "storage", "test", "raw_data", "polymarket_data_20260121.csv"))
-    
-    # Path 2: Using get_storage_path()
-    try:
-        env = get_environment()
-        possible_paths.append(os.path.join(get_storage_path(), "raw_data", "polymarket_data_20260121.csv"))
-    except:
-        pass
-    
-    # Path 3: Relative to current file
-    current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    possible_paths.append(os.path.join(current_file_dir, "..", "..", "storage", "test", "raw_data", "polymarket_data_20260121.csv"))
-    
-    csv_path = None
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            csv_path = abs_path
-            break
-    
-    if csv_path is None:
-        logger.error(f"CSV file not found in any of these paths: {possible_paths}")
-        return pd.DataFrame()
-    
-    # If cache is valid, return it
-    if _csv_cache is not None and _csv_cache_path == csv_path and os.path.exists(csv_path):
-        return _csv_cache
-    
-    try:
-        logger.info(f"Loading CSV from: {csv_path}")
-        _csv_cache = pd.read_csv(csv_path, low_memory=False)
-        _csv_cache_path = csv_path
-        logger.info(f"Loaded CSV data: {len(_csv_cache)} records from {csv_path}")
-        return _csv_cache
-    except Exception as e:
-        logger.error(f"Error loading CSV: {str(e)}", exc_info=True)
-        return pd.DataFrame()
-
-
-def _search_csv(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+def _search_trade_data(query: str, limit: int = 10, include_inactive: bool = False) -> List[Dict[str, Any]]:
     """
-    Search CSV data for markets matching the query in the "question" field.
-    This function is designed to be easily replaceable with a DB query later.
+    Search trade_data table for markets matching the query in the "question" field.
     
     Args:
         query: Search query string
         limit: Maximum number of results to return
+        include_inactive: If True, include inactive/closed/archived/not accepting orders bets
         
     Returns:
         List of matching market dictionaries
@@ -243,43 +226,83 @@ def _search_csv(query: str, limit: int = 10) -> List[Dict[str, Any]]:
     if not query or len(query.strip()) < 2:
         return []
     
-    df = _load_csv_data()
-    if df.empty:
-        logger.warning("CSV data is empty")
-        return []
-    
-    query_lower = query.lower().strip()
-    
-    # Search only in the "question" column
-    if 'question' not in df.columns:
-        logger.warning(f"Column 'question' not found in CSV. Available columns: {list(df.columns)}")
-        return []
-    
     try:
-        # Create a mask for matching rows (case-insensitive search in question field)
-        # Handle NaN values by converting to string first
-        mask = df['question'].fillna('').astype(str).str.lower().str.contains(query_lower, na=False, regex=False)
+        engine = _get_search_engine()
         
-        # Filter results
-        results_df = df[mask].head(limit)
+        # Build search query with optional filters
+        if include_inactive:
+            # No filters - include all bets
+            # Order by: volume DESC (highest first)
+            search_query = text("""
+                SELECT 
+                    condition_id, question_id, question, description, market_slug, category,
+                    active, closed, archived, NULL as accepting_orders, NULL as accepting_order_timestamp,
+                    NULL as enable_order_book, NULL as minimum_order_size, NULL as minimum_tick_size, 
+                    NULL as min_incentive_size, NULL as max_incentive_spread, NULL as maker_base_fee, 
+                    NULL as taker_base_fee, end_date_iso, NULL as game_start_time, NULL as seconds_delay,
+                    fpmm_live as fpmm, icon, image, NULL as neg_risk, NULL as neg_risk_market_id,
+                    NULL as neg_risk_request_id, NULL as is_50_50_outcome, NULL as token_0_id,
+                    NULL as token_0_outcome, NULL as token_0_price, NULL as token_0_winner, NULL as token_1_id,
+                    NULL as token_1_outcome, NULL as token_1_price, NULL as token_1_winner, NULL as rewards_rates,
+                    rewards_min_size, rewards_max_spread, notifications_enabled, tags,
+                    COALESCE(volume, 0) as volume, download_date, created_at
+                FROM trade_data
+                WHERE question ILIKE :query_pattern
+                ORDER BY COALESCE(volume, 0) DESC
+                LIMIT :limit
+            """)
+        else:
+            # Filter: closed = false, active = true, archived = false, accepting_orders = true
+            # Order by: volume DESC (highest first)
+            search_query = text("""
+                SELECT 
+                    condition_id, question_id, question, description, market_slug, category,
+                    active, closed, archived, accepting_orders, accepting_order_timestamp,
+                    enable_order_book, minimum_order_size, minimum_tick_size, min_incentive_size,
+                    max_incentive_spread, maker_base_fee, taker_base_fee, end_date_iso,
+                    game_start_time, seconds_delay, fpmm, icon, image, neg_risk,
+                    neg_risk_market_id, neg_risk_request_id, is_50_50_outcome, token_0_id,
+                    token_0_outcome, token_0_price, token_0_winner, token_1_id,
+                    token_1_outcome, token_1_price, token_1_winner,                     rewards_rates,
+                    rewards_min_size, rewards_max_spread, notifications_enabled, tags,
+                    COALESCE(volume, 0) as volume, download_date, created_at
+                FROM trade_data
+                WHERE active = true
+                    AND closed = false
+                    AND archived = false
+                    AND accepting_orders = true
+                    AND question ILIKE :query_pattern
+                ORDER BY COALESCE(volume, 0) DESC
+                LIMIT :limit
+            """)
         
-        logger.info(f"Search for '{query}' found {len(results_df)} results")
+        query_pattern = f"%{query.strip()}%"
         
-        # Convert to list of dictionaries
-        # Use orient='records' to get list of dicts
-        results = results_df.to_dict(orient='records')  # type: ignore
-        
-        # Clean up the results (handle NaN values)
-        for result in results:
-            for key, value in result.items():
-                if pd.isna(value):
-                    result[key] = None
-                elif isinstance(value, (int, float)) and pd.isna(value):
-                    result[key] = None
-        
-        return results
+        with engine.connect() as conn:
+            results = conn.execute(
+                search_query,
+                {"query_pattern": query_pattern, "limit": limit}
+            )
+            
+            # Convert results to list of dictionaries
+            columns = results.keys()
+            results_list = []
+            for row in results:
+                row_dict = {}
+                for col in columns:
+                    value = getattr(row, col)
+                    # Handle None and NaN values
+                    if value is None or (isinstance(value, float) and pd.isna(value)):
+                        row_dict[col] = None
+                    else:
+                        row_dict[col] = value
+                results_list.append(row_dict)
+            
+            logger.info(f"Search for '{query}' found {len(results_list)} results from trade_data table")
+            return results_list
+            
     except Exception as e:
-        logger.error(f"Error searching CSV: {str(e)}")
+        logger.error(f"Error searching trade_data: {str(e)}", exc_info=True)
         return []
 
 
@@ -287,14 +310,17 @@ def _search_csv(query: str, limit: int = 10) -> List[Dict[str, Any]]:
 async def search_markets(
     q: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
+    include_inactive: bool = Query(False, description="Include inactive/closed/archived/not accepting orders bets"),
 ):
     """
-    Search markets in CSV data.
-    Returns top results matching the query.
+    Search markets in trade_data table.
+    Returns top results matching the query in the question field.
+    By default, only returns active, not closed, accepting orders, not archived bets.
+    Connects to the appropriate database based on environment (dev/test/prod).
     """
     try:
-        logger.info(f"Search request: query='{q}', limit={limit}")
-        results = _search_csv(q, limit=limit)
+        logger.info(f"Search request: query='{q}', limit={limit}, include_inactive={include_inactive}")
+        results = _search_trade_data(q, limit=limit, include_inactive=include_inactive)
         logger.info(f"Search returned {len(results)} results for query '{q}'")
         return {
             "query": q,

@@ -62,117 +62,85 @@ class MarketDataProcessor:
                 open_markets.append(market)
         return open_markets
 
-    def save_markets_to_csv(self, markets: list, filename: str):
+    def save_markets_to_csv(self, markets: list, filename: str, source: str = ""):
         """
         Save markets data to CSV file with all available fields.
+        Generic method that handles any market format (clob-api, etc.).
 
         Args:
             markets: List of market dictionaries
             filename: Output CSV file path
+            source: Source of the data (e.g., "clob-api")
         """
+        import json
+        
         data = []
         for market in markets:
-            # Handle tags - ensure we have a list even if tags is None
-            tags = market.get("tags", [])
-            tags = tags if isinstance(tags, list) else []
-
-            row = {
-                # Market identification
-                "condition_id": market.get("condition_id", ""),
-                "question_id": market.get("question_id", ""),
-                "question": self.clean_text(market.get("question", "")),
-                "description": self.clean_text(market.get("description", "")),
-                "market_slug": market.get("market_slug", ""),
-                "category": self.clean_text(market.get("category", "")),
-                # Status flags
-                "active": market.get("active", ""),
-                "closed": market.get("closed", ""),
-                "archived": market.get("archived", ""),
-                "accepting_orders": market.get("accepting_orders", ""),
-                "accepting_order_timestamp": market.get(
-                    "accepting_order_timestamp", ""
-                ),
-                "enable_order_book": market.get("enable_order_book", ""),
-                # Market parameters
-                "minimum_order_size": market.get("minimum_order_size", ""),
-                "minimum_tick_size": market.get("minimum_tick_size", ""),
-                "min_incentive_size": market.get("min_incentive_size", ""),
-                "max_incentive_spread": market.get("max_incentive_spread", ""),
-                "maker_base_fee": market.get("maker_base_fee", ""),
-                "taker_base_fee": market.get("taker_base_fee", ""),
-                # Timing information
-                "end_date_iso": market.get("end_date_iso", ""),
-                "game_start_time": market.get("game_start_time", ""),
-                "seconds_delay": market.get("seconds_delay", ""),
-                # Contract information
-                "fpmm": market.get("fpmm", ""),
-                "icon": market.get("icon", ""),
-                "image": market.get("image", ""),
-                # Risk parameters
-                "neg_risk": market.get("neg_risk", ""),
-                "neg_risk_market_id": market.get("neg_risk_market_id", ""),
-                "neg_risk_request_id": market.get("neg_risk_request_id", ""),
-                "is_50_50_outcome": market.get("is_50_50_outcome", ""),
-                # Token 0 information
-                "token_0_id": (
-                    market["tokens"][0].get("token_id", "")
-                    if market.get("tokens")
-                    else ""
-                ),
-                "token_0_outcome": (
-                    self.clean_text(market["tokens"][0].get("outcome", ""))
-                    if market.get("tokens")
-                    else ""
-                ),
-                "token_0_price": (
-                    market["tokens"][0].get("price", "") if market.get("tokens") else ""
-                ),
-                "token_0_winner": (
-                    market["tokens"][0].get("winner", "")
-                    if market.get("tokens")
-                    else ""
-                ),
-                # Token 1 information
-                "token_1_id": (
-                    market["tokens"][1].get("token_id", "")
-                    if len(market.get("tokens", [])) > 1
-                    else ""
-                ),
-                "token_1_outcome": (
-                    self.clean_text(market["tokens"][1].get("outcome", ""))
-                    if len(market.get("tokens", [])) > 1
-                    else ""
-                ),
-                "token_1_price": (
-                    market["tokens"][1].get("price", "")
-                    if len(market.get("tokens", [])) > 1
-                    else ""
-                ),
-                "token_1_winner": (
-                    market["tokens"][1].get("winner", "")
-                    if len(market.get("tokens", [])) > 1
-                    else ""
-                ),
-                # Rewards information
-                "rewards_rates": (
-                    str(market.get("rewards", {}).get("rates", ""))
-                    if market.get("rewards")
-                    else ""
-                ),
-                "rewards_min_size": (
-                    str(market.get("rewards", {}).get("min_size", ""))
-                    if market.get("rewards")
-                    else ""
-                ),
-                "rewards_max_spread": (
-                    str(market.get("rewards", {}).get("max_spread", ""))
-                    if market.get("rewards")
-                    else ""
-                ),
-                # Notifications and tags
-                "notifications_enabled": market.get("notifications_enabled", ""),
-                "tags": ",".join(tags),
-            }
+            row = {}
+            
+            # Fields that should be cleaned (text fields)
+            text_fields = ["question", "description", "category", "token_0_outcome", "token_1_outcome"]
+            
+            # Fields that should be converted to JSON strings (lists/dicts)
+            json_fields = ["clob_token_ids", "outcomes", "outcome_prices", "tokens", "rewards"]
+            
+            # Process all fields in the market dictionary
+            for key, value in market.items():
+                # Skip nested structures that we'll handle separately
+                if key in ["tokens", "rewards"]:
+                    continue
+                
+                # Handle JSON fields
+                if key in json_fields:
+                    if value:
+                        try:
+                            row[key] = json.dumps(value) if not isinstance(value, str) else value
+                        except (TypeError, ValueError):
+                            row[key] = str(value)
+                    else:
+                        row[key] = ""
+                # Handle text fields that need cleaning
+                elif key in text_fields:
+                    row[key] = self.clean_text(value) if value else ""
+                # Handle tags specially (convert list to comma-separated string)
+                elif key == "tags":
+                    tags = value if isinstance(value, list) else (value if value else [])
+                    row[key] = ",".join(str(t) for t in tags) if tags else ""
+                # Handle all other fields
+                else:
+                    if value is None:
+                        row[key] = ""
+                    elif isinstance(value, (dict, list)):
+                        # Convert complex types to JSON
+                        try:
+                            row[key] = json.dumps(value)
+                        except (TypeError, ValueError):
+                            row[key] = str(value)
+                    else:
+                        row[key] = value
+            
+            # Handle tokens array (flatten to token_0_*, token_1_* fields)
+            if "tokens" in market and market.get("tokens"):
+                tokens = market["tokens"]
+                if len(tokens) > 0:
+                    row["token_0_id"] = tokens[0].get("token_id", "")
+                    row["token_0_outcome"] = self.clean_text(tokens[0].get("outcome", ""))
+                    row["token_0_price"] = tokens[0].get("price", "")
+                    row["token_0_winner"] = tokens[0].get("winner", "")
+                if len(tokens) > 1:
+                    row["token_1_id"] = tokens[1].get("token_id", "")
+                    row["token_1_outcome"] = self.clean_text(tokens[1].get("outcome", ""))
+                    row["token_1_price"] = tokens[1].get("price", "")
+                    row["token_1_winner"] = tokens[1].get("winner", "")
+            
+            # Handle rewards dict (flatten to rewards_* fields)
+            if "rewards" in market and market.get("rewards"):
+                rewards = market["rewards"]
+                row["rewards_rates"] = str(rewards.get("rates", "")) if rewards.get("rates") else ""
+                row["rewards_min_size"] = str(rewards.get("min_size", "")) if rewards.get("min_size") else ""
+                row["rewards_max_spread"] = str(rewards.get("max_spread", "")) if rewards.get("max_spread") else ""
+            
+            
             data.append(row)
 
         # Convert to DataFrame and save to CSV

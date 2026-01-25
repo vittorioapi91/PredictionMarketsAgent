@@ -1,4 +1,12 @@
-"""Database operations for PredictionMarketsAgent"""
+"""
+Database operations for PredictionMarketsAgent
+
+Table Data Sources:
+-------------------
+- trade_data: Market data from Polymarket CLOB API (https://clob.polymarket.com/)
+  - Fetched via: src.polymarket.client.fetch_all_markets()
+  - Uploaded via: src.polymarket.data_pipeline.collect_data()
+"""
 
 import os
 import logging
@@ -101,16 +109,16 @@ class DatabaseManager:
             logger.error(f"Error creating tables: {str(e)}")
             raise
 
-
-    def upload_csv_to_trade_data(
+    def upload_csv_to_table(
         self,
         csv_path: str,
         db_name: str = "polymarket",
         table_name: str = "trade_data"
     ) -> int:
         """
-        Upload CSV data to the trade_data table in the specified database.
-        Extracts download date from filename (format: polymarket_data_YYYYMMDD.csv).
+        Generic method to upload CSV data to any table in the specified database.
+        Automatically creates the table if it doesn't exist (based on table_name).
+        Extracts download date from filename (format: *_YYYYMMDD.csv).
 
         Args:
             csv_path: Path to the CSV file
@@ -122,24 +130,28 @@ class DatabaseManager:
         """
         import re
         import pandas as pd
-        from pathlib import Path
+        import json
         
         # Extract date from filename
         filename = os.path.basename(csv_path)
         date_match = re.search(r'(\d{8})', filename)
         if not date_match:
-            raise ValueError(f"Could not extract date from filename: {filename}")
+            try:
+                file_time = os.path.getmtime(csv_path)
+                download_date = datetime.fromtimestamp(file_time).date()
+                logger.warning(f"Could not extract date from filename: {filename}, using file modification date: {download_date}")
+            except Exception as e:
+                raise ValueError(f"Could not extract date from filename: {filename}, and could not get file modification time: {str(e)}")
+        else:
+            download_date_str = date_match.group(1)
+            download_date = datetime.strptime(download_date_str, "%Y%m%d").date()
+            logger.info(f"Extracted download date: {download_date} from filename")
         
-        download_date_str = date_match.group(1)
-        download_date = datetime.strptime(download_date_str, "%Y%m%d").date()
-        logger.info(f"Extracted download date: {download_date} from filename")
-        
-        # Create connection to the specified database
+        # Create connection
         connection_string = (
             f"postgresql://{self.db_user}:{self.db_password}@"
             f"{self.db_host}:{self.db_port}/{db_name}"
         )
-        
         engine = create_engine(connection_string, pool_pre_ping=True, echo=False)
         
         # Test connection - will raise error if database doesn't exist
@@ -147,79 +159,42 @@ class DatabaseManager:
             conn.execute(text("SELECT 1"))
         logger.info(f"Connected to database: {db_name} on {self.db_host}:{self.db_port}")
         
-        # Create trade_data table if it doesn't exist
-        try:
-            with engine.connect() as conn:
-                conn.execute(text(f"""
-                    CREATE TABLE IF NOT EXISTS {table_name} (
-                        id SERIAL PRIMARY KEY,
-                        condition_id VARCHAR(255),
-                        question_id VARCHAR(255),
-                        question TEXT,
-                        description TEXT,
-                        market_slug VARCHAR(255),
-                        category VARCHAR(255),
-                        active BOOLEAN,
-                        closed BOOLEAN,
-                        archived BOOLEAN,
-                        accepting_orders BOOLEAN,
-                        accepting_order_timestamp TIMESTAMP,
-                        enable_order_book BOOLEAN,
-                        minimum_order_size NUMERIC,
-                        minimum_tick_size NUMERIC,
-                        min_incentive_size NUMERIC,
-                        max_incentive_spread NUMERIC,
-                        maker_base_fee NUMERIC,
-                        taker_base_fee NUMERIC,
-                        end_date_iso TIMESTAMP,
-                        game_start_time TIMESTAMP,
-                        seconds_delay INTEGER,
-                        fpmm VARCHAR(255),
-                        icon TEXT,
-                        image TEXT,
-                        neg_risk BOOLEAN,
-                        neg_risk_market_id VARCHAR(255),
-                        neg_risk_request_id VARCHAR(255),
-                        is_50_50_outcome BOOLEAN,
-                        token_0_id VARCHAR(255),
-                        token_0_outcome TEXT,
-                        token_0_price NUMERIC,
-                        token_0_winner BOOLEAN,
-                        token_1_id VARCHAR(255),
-                        token_1_outcome TEXT,
-                        token_1_price NUMERIC,
-                        token_1_winner BOOLEAN,
-                        rewards_rates TEXT,
-                        rewards_min_size TEXT,
-                        rewards_max_spread TEXT,
-                        notifications_enabled BOOLEAN,
-                        tags TEXT,
-                        download_date DATE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
-                
-                # Create indexes
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{table_name}_question 
-                    ON {table_name}(question)
-                """))
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{table_name}_download_date 
-                    ON {table_name}(download_date)
-                """))
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{table_name}_condition_id 
-                    ON {table_name}(condition_id)
-                """))
-                
-                conn.commit()
-            logger.info(f"Table {table_name} created/verified in database {db_name}")
-        except SQLAlchemyError as e:
-            logger.error(f"Error creating table: {str(e)}")
-            raise
-        
-        # Load CSV data
+        # Create table if it doesn't exist (based on table_name)
+        if table_name == "trade_data":
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text(f"""
+                        CREATE TABLE IF NOT EXISTS {table_name} (
+                            id SERIAL PRIMARY KEY,
+                            condition_id VARCHAR(255), question_id VARCHAR(255),
+                            question TEXT, description TEXT, market_slug VARCHAR(255), category VARCHAR(255),
+                            active BOOLEAN, closed BOOLEAN, archived BOOLEAN, accepting_orders BOOLEAN,
+                            accepting_order_timestamp TIMESTAMP, enable_order_book BOOLEAN,
+                            minimum_order_size NUMERIC, minimum_tick_size NUMERIC, min_incentive_size NUMERIC,
+                            max_incentive_spread NUMERIC, maker_base_fee NUMERIC, taker_base_fee NUMERIC,
+                            end_date_iso TIMESTAMP, game_start_time TIMESTAMP, seconds_delay INTEGER,
+                            fpmm VARCHAR(255), icon TEXT, image TEXT, neg_risk BOOLEAN,
+                            neg_risk_market_id VARCHAR(255), neg_risk_request_id VARCHAR(255), is_50_50_outcome BOOLEAN,
+                            token_0_id VARCHAR(255), token_0_outcome TEXT, token_0_price NUMERIC, token_0_winner BOOLEAN,
+                            token_1_id VARCHAR(255), token_1_outcome TEXT, token_1_price NUMERIC, token_1_winner BOOLEAN,
+                            rewards_rates TEXT, rewards_min_size TEXT, rewards_max_spread TEXT,
+                            notifications_enabled BOOLEAN, tags TEXT, volume NUMERIC,
+                            download_date DATE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    # Create indexes (simplified for brevity)
+                    for idx_sql in [
+                        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_question ON {table_name}(question)",
+                        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_condition_id ON {table_name}(condition_id)",
+                        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_volume ON {table_name}(volume) WHERE volume IS NOT NULL",
+                    ]:
+                        conn.execute(text(idx_sql))
+                    conn.commit()
+                logger.info(f"Table {table_name} created/verified")
+            except SQLAlchemyError as e:
+                logger.error(f"Error creating table: {str(e)}")
+                raise
+        # Load CSV
         try:
             logger.info(f"Loading CSV from: {csv_path}")
             df = pd.read_csv(csv_path, low_memory=False)
@@ -228,7 +203,6 @@ class DatabaseManager:
             logger.error(f"Error reading CSV file: {str(e)}")
             raise
         
-        # Prepare data for batch insert
         # Helper functions for data conversion
         def to_bool(value: Any) -> Optional[bool]:
             if value is None or (isinstance(value, float) and pd.isna(value)) or value == "":
@@ -263,80 +237,63 @@ class DatabaseManager:
                 return None
             return str(value) if value != "" else None
         
-        def to_int(value: Any) -> Optional[int]:
+        def to_json(value: Any) -> Optional[str]:
             if value is None or (isinstance(value, float) and pd.isna(value)):
                 return None
+            if isinstance(value, str):
+                try:
+                    json.loads(value)
+                    return value
+                except:
+                    return value
             try:
-                return int(value)
-            except (ValueError, TypeError):
-                return None
+                return json.dumps(value)
+            except:
+                return str(value) if value != "" else None
         
-        # Prepare DataFrame with proper data types
+        # Prepare DataFrame - apply type conversions based on column names
         logger.info("Preparing data for batch insert...")
         df_prepared = pd.DataFrame()
         
-        # Map columns and apply conversions
-        column_mappings = {
-            "condition_id": lambda x: to_str(x),
-            "question_id": lambda x: to_str(x),
-            "question": lambda x: to_str(x),
-            "description": lambda x: to_str(x),
-            "market_slug": lambda x: to_str(x),
-            "category": lambda x: to_str(x),
-            "active": lambda x: to_bool(x),
-            "closed": lambda x: to_bool(x),
-            "archived": lambda x: to_bool(x),
-            "accepting_orders": lambda x: to_bool(x),
-            "accepting_order_timestamp": lambda x: to_timestamp(x),
-            "enable_order_book": lambda x: to_bool(x),
-            "minimum_order_size": lambda x: to_numeric(x),
-            "minimum_tick_size": lambda x: to_numeric(x),
-            "min_incentive_size": lambda x: to_numeric(x),
-            "max_incentive_spread": lambda x: to_numeric(x),
-            "maker_base_fee": lambda x: to_numeric(x),
-            "taker_base_fee": lambda x: to_numeric(x),
-            "end_date_iso": lambda x: to_timestamp(x),
-            "game_start_time": lambda x: to_timestamp(x),
-            "seconds_delay": lambda x: to_int(x),
-            "fpmm": lambda x: to_str(x),
-            "icon": lambda x: to_str(x),
-            "image": lambda x: to_str(x),
-            "neg_risk": lambda x: to_bool(x),
-            "neg_risk_market_id": lambda x: to_str(x),
-            "neg_risk_request_id": lambda x: to_str(x),
-            "is_50_50_outcome": lambda x: to_bool(x),
-            "token_0_id": lambda x: to_str(x),
-            "token_0_outcome": lambda x: to_str(x),
-            "token_0_price": lambda x: to_numeric(x),
-            "token_0_winner": lambda x: to_bool(x),
-            "token_1_id": lambda x: to_str(x),
-            "token_1_outcome": lambda x: to_str(x),
-            "token_1_price": lambda x: to_numeric(x),
-            "token_1_winner": lambda x: to_bool(x),
-            "rewards_rates": lambda x: to_str(x),
-            "rewards_min_size": lambda x: to_str(x),
-            "rewards_max_spread": lambda x: to_str(x),
-            "notifications_enabled": lambda x: to_bool(x),
-            "tags": lambda x: to_str(x),
-        }
+        bool_cols = ["active", "closed", "archived", "accepting_orders", "enable_order_book", 
+                     "neg_risk", "is_50_50_outcome", "token_0_winner", "token_1_winner", 
+                     "notifications_enabled", "restricted", "fpmm_live"]
+        numeric_cols = ["volume", "volume_num", "volume_24hr", "volume_1wk", "volume_1mo", "volume_1yr",
+                       "liquidity", "liquidity_num", "liquidity_amm", "liquidity_clob",
+                       "volume_1wk_amm", "volume_1mo_amm", "volume_1yr_amm",
+                       "volume_1wk_clob", "volume_1mo_clob", "volume_1yr_clob",
+                       "minimum_order_size", "minimum_tick_size", "min_incentive_size", "max_incentive_spread",
+                       "maker_base_fee", "taker_base_fee", "token_0_price", "token_1_price",
+                       "competitive", "spread", "one_day_price_change", "one_hour_price_change",
+                       "one_week_price_change", "one_month_price_change", "one_year_price_change",
+                       "last_trade_price", "best_bid", "best_ask"]
+        timestamp_cols = ["accepting_order_timestamp", "end_date_iso", "game_start_time", "end_date"]
+        json_cols = ["clob_token_ids", "outcomes", "outcome_prices"]
         
-        # Apply conversions to existing columns
-        for col, converter in column_mappings.items():
-            if col in df.columns:
-                df_prepared[col] = df[col].apply(converter)
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in bool_cols:
+                df_prepared[col] = df[col].apply(to_bool)
+            elif col_lower in numeric_cols:
+                df_prepared[col] = df[col].apply(to_numeric)
+            elif col_lower in timestamp_cols:
+                df_prepared[col] = df[col].apply(to_timestamp)
+            elif col_lower in json_cols:
+                df_prepared[col] = df[col].apply(to_json)
+            else:
+                df_prepared[col] = df[col].apply(to_str)
         
-        # Add download_date column
-        df_prepared["download_date"] = download_date
+        # Add download_date if missing
+        if "download_date" not in df_prepared.columns:
+            df_prepared["download_date"] = download_date
         
-        # Insert data in batches using pandas to_sql
-        batch_size = 10000  # Insert 10,000 records at a time
+        # Batch insert
+        batch_size = 10000
         total_records = len(df_prepared)
         inserted = 0
         
         try:
             logger.info(f"Inserting {total_records} records in batches of {batch_size}...")
-            
-            # Use tqdm for progress indication
             pbar = tqdm(
                 desc="Uploading records",
                 total=total_records,
@@ -345,19 +302,17 @@ class DatabaseManager:
                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
             )
             
-            # Insert in batches
             for start_idx in range(0, total_records, batch_size):
                 end_idx = min(start_idx + batch_size, total_records)
                 batch_df = df_prepared.iloc[start_idx:end_idx]
                 
-                # Use pandas to_sql with if_exists='append' for batch inserts
                 batch_df.to_sql(
                     name=table_name,
                     con=engine,
                     if_exists='append',
                     index=False,
-                    method='multi',  # Use multi-row INSERT for better performance
-                    chunksize=1000,  # Internal chunking within each batch
+                    method='multi',
+                    chunksize=1000,
                 )
                 
                 inserted += len(batch_df)
@@ -369,3 +324,23 @@ class DatabaseManager:
         except SQLAlchemyError as e:
             logger.error(f"Error inserting data: {str(e)}")
             raise
+
+    def upload_csv_to_trade_data(
+        self,
+        csv_path: str,
+        db_name: str = "polymarket",
+        table_name: str = "trade_data"
+    ) -> int:
+        """
+        Upload CSV data to the trade_data table.
+        Wrapper around upload_csv_to_table() for backward compatibility.
+
+        Args:
+            csv_path: Path to the CSV file
+            db_name: Database name (default: "polymarket")
+            table_name: Table name (default: "trade_data")
+
+        Returns:
+            Number of records inserted
+        """
+        return self.upload_csv_to_table(csv_path, db_name, table_name)

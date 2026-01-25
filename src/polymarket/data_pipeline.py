@@ -110,7 +110,7 @@ class DataPipeline:
             if markets:
                 # Save to CSV
                 csv_file = self.processor.get_output_path("raw_data", self.date_today)
-                self.processor.save_markets_to_csv(markets, csv_file)
+                self.processor.save_markets_to_csv(markets, csv_file, source="clob-api")
                 
                 # Upload CSV to trade_data table in polymarket database
                 logger.info("Uploading CSV to trade_data table in polymarket database...")
@@ -129,6 +129,7 @@ class DataPipeline:
         except Exception as e:
             logger.error(f"Error collecting data: {str(e)}")
             return False
+
 
     def filter_open_markets(self) -> bool:
         """
@@ -290,10 +291,13 @@ Examples:
   # Collect order books
   python -m src.polymarket.data_pipeline --order_book
 
-  # Run both trade_data and order_book
-  python -m src.polymarket.data_pipeline --trade_data --order_book
+  # Fetch builders volume data
+  python -m src.polymarket.data_pipeline --builders_volume
 
-Note: At least one switch (--trade_data or --order_book) must be provided.
+  # Run multiple steps
+  python -m src.polymarket.data_pipeline --trade_data --order_book --builders_volume
+
+Note: At least one switch (--trade_data, --order_book, or --builders_volume) must be provided.
         """
     )
     
