@@ -49,9 +49,9 @@ export default function Home() {
   const hideSearch = (e?: React.MouseEvent) => {
     // Only hide if search is not explicitly visible (clicked) and mouse is not over results
     if (!searchVisible) {
-      const relatedTarget = e?.relatedTarget as HTMLElement;
-      // If moving to search results, keep it visible
-      if (relatedTarget && (
+      const relatedTarget = e?.relatedTarget as Node | null;
+      // If moving to search results, keep it visible (contains requires a Node)
+      if (relatedTarget instanceof Node && (
         searchContainerRef.current?.contains(relatedTarget) ||
         searchResultsRef.current?.contains(relatedTarget)
       )) {
